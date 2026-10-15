@@ -1,8 +1,8 @@
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
-import { useDelegatedRuns } from "../../state/delegation";
+import { useDelegatedRuns, useDelegationOrigin } from "../../state/delegation";
 import { buildThreadRouteParams } from "../../threadRoutes";
 
 /**
@@ -12,7 +12,15 @@ import { buildThreadRouteParams } from "../../threadRoutes";
  */
 export function useDelegatedRunsStrip(threadRef: ScopedThreadRef) {
   const navigate = useNavigate();
-  const delegatedRuns = useDelegatedRuns(threadRef);
+  const origin = useDelegationOrigin(threadRef);
+  const rootRef = useMemo(
+    () =>
+      origin
+        ? { environmentId: threadRef.environmentId, threadId: origin.parentThreadId }
+        : threadRef,
+    [threadRef, origin],
+  );
+  const delegatedRuns = useDelegatedRuns(rootRef);
   const { environmentId } = threadRef;
   const onOpenDelegatedThread = useCallback(
     (threadId: ThreadId) => {
@@ -23,5 +31,5 @@ export function useDelegatedRunsStrip(threadRef: ScopedThreadRef) {
     },
     [environmentId, navigate],
   );
-  return { delegatedRuns, onOpenDelegatedThread };
+  return { delegatedRuns, onOpenDelegatedThread, origin };
 }

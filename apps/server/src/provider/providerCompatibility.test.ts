@@ -52,6 +52,15 @@ const provider: ServerProvider = {
 };
 
 describe("provider compatibility", () => {
+  it("supports the verified OpenCode 2 adapter version while retaining legacy support", () => {
+    const policies = ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility;
+    const opencode = ProviderDriverKind.make("opencode");
+    assert.equal(resolveProviderCompatibility(policies, opencode, "2.0.25")?.status, "supported");
+    assert.equal(resolveProviderCompatibility(policies, opencode, "1.14.19")?.status, "supported");
+    assert.equal(resolveProviderCompatibility(policies, opencode, "2.0.26")?.status, "unknown");
+    assert.equal(resolveProviderCompatibility(policies, opencode, "1.14.18")?.status, "broken");
+  });
+
   it("bundles a compatibility policy for every built-in harness", () => {
     for (const builtIn of BUILT_IN_DRIVERS) {
       assert.isDefined(

@@ -99,6 +99,8 @@ export function createSidebarSortingStrategy(input: {
   settledOrder: readonly string[];
   settledExpanded: boolean;
   settledVisibleCount?: number;
+  /** Apply collapsed-family visibility after paging, including the route exception. */
+  hiddenThreadKeys?: ReadonlySet<string>;
   routeThreadKey?: string | null;
   snoozedThreadCount?: number;
   cardHeight?: number;
@@ -169,7 +171,9 @@ export function createSidebarSortingStrategy(input: {
     if (routeKey && settledOrder.includes(routeKey) && !visible.includes(routeKey)) {
       visible.push(routeKey);
     }
-    groups.settled = visible.map((key) => ({ kind: "thread", key, section: "settled" }));
+    groups.settled = visible
+      .filter((key) => !input.hiddenThreadKeys?.has(key))
+      .map((key) => ({ kind: "thread", key, section: "settled" }));
     const projected: SidebarListItem[] = [];
     const marker = (name: SidebarListMarker) => projected.push({ kind: "marker", marker: name });
     const section = (name: "active" | "settled") => {

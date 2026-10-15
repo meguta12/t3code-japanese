@@ -71,6 +71,7 @@ export type DelegatedRunStatus =
 
 /** A child thread running on another provider/model; see lib/delegation.ts for how it is derived. */
 export interface DelegatedChildRun {
+  readonly title?: string;
   readonly threadId: ThreadId;
   readonly instanceId: ProviderInstanceId;
   readonly model: string;
@@ -79,6 +80,7 @@ export interface DelegatedChildRun {
 }
 
 export interface DelegatedRunChip {
+  readonly title?: string;
   readonly threadId: ThreadId;
   readonly driverKind: ProviderDriverKind | null;
   readonly providerName: string;
@@ -337,22 +339,21 @@ function deriveDelegatedChips(
   runs: ReadonlyArray<DelegatedChildRun>,
   entries: ReadonlyArray<ProviderInstanceEntry>,
 ): ReadonlyArray<DelegatedRunChip> {
-  return runs
-    .filter((run) => isActiveDelegatedRun(run.status))
-    .map((run) => {
-      const entry = entries.find((candidate) => candidate.instanceId === run.instanceId);
-      const model = findModel(entry, run.model);
-      const status = DELEGATED_STATUS[run.status];
-      return {
-        threadId: run.threadId,
-        driverKind: entry?.driverKind ?? null,
-        providerName: entry?.displayName ?? run.instanceId,
-        modelName: model ? getTriggerDisplayModelName(model) : run.model,
-        effortLabel: run.effort ?? null,
-        statusLabel: status.label,
-        tone: status.tone,
-      };
-    });
+  return runs.map((run) => {
+    const entry = entries.find((candidate) => candidate.instanceId === run.instanceId);
+    const model = findModel(entry, run.model);
+    const status = DELEGATED_STATUS[run.status];
+    return {
+      threadId: run.threadId,
+      ...(run.title ? { title: run.title } : {}),
+      driverKind: entry?.driverKind ?? null,
+      providerName: entry?.displayName ?? run.instanceId,
+      modelName: model ? getTriggerDisplayModelName(model) : run.model,
+      effortLabel: run.effort ?? null,
+      statusLabel: status.label,
+      tone: status.tone,
+    };
+  });
 }
 
 export function deriveRunningModelStrip(input: RunningModelStripInput): RunningModelStripView {

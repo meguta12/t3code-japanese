@@ -1,4 +1,5 @@
 import {
+  deriveDelegationStatus,
   DELEGATION_ORIGIN_ACTIVITY_KIND,
   DELEGATION_STARTED_ACTIVITY_KIND,
   DelegationOriginPayload,
@@ -67,6 +68,8 @@ export function deriveDelegationOrigin(activities: ReadonlyArray<ActivityLike>):
 
 /** The parts of a thread shell that say how a delegated child is doing. */
 export interface DelegatedChildShell {
+  readonly hasPendingTurnStart?: boolean | undefined;
+  readonly session?: { readonly status: string; readonly updatedAt: string } | null | undefined;
   readonly modelSelection?: ModelSelection;
   readonly latestTurn: Pick<OrchestrationLatestTurn, "state" | "requestedAt"> | null;
   readonly latestUserMessageAt: string | null;
@@ -81,24 +84,8 @@ export interface DelegatedChildShell {
  * yet is still starting.
  */
 export function deriveDelegatedRunStatus(shell: DelegatedChildShell): DelegatedRunStatus {
-  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return "awaiting";
-  const turn = shell.latestTurn;
-  if (turn === null) return "running";
-  if (shell.latestUserMessageAt !== null) {
-    const sent = Date.parse(shell.latestUserMessageAt);
-    const requested = Date.parse(turn.requestedAt);
-    if (sent > requested) return "running";
-  }
-  switch (turn.state) {
-    case "running":
-      return "running";
-    case "completed":
-      return "completed";
-    case "error":
-      return "error";
-    case "interrupted":
-      return "interrupted";
-  }
+  const status = deriveDelegationStatus(shell);
+  return status === "needs_user_action" ? "awaiting" : status;
 }
 
 /** null means removed; undefined means its shell has not loaded yet. */
@@ -121,6 +108,7 @@ export function deriveDelegatedRuns(
     return [
       {
         threadId: start.childThreadId,
+        title: start.title,
         instanceId: selection?.instanceId ?? start.provider,
         model: selection?.model ?? start.model,
         effort: selection
@@ -144,6 +132,7 @@ export function delegatedRunsEqual(
       const other = right[index]!;
       return (
         run.threadId === other.threadId &&
+        run.title === other.title &&
         run.instanceId === other.instanceId &&
         run.model === other.model &&
         (run.effort ?? null) === (other.effort ?? null) &&

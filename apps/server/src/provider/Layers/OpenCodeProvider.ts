@@ -27,6 +27,7 @@ import {
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import { verifyOpenCode2, type OpenCode2Runtime } from "../OpenCode2Runtime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
@@ -34,6 +35,79 @@ const OPENCODE_PRESENTATION = {
   showInteractionModeToggle: false,
 } as const;
 const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
+
+export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderStatus")(function* (
+  settings: OpenCodeSettings,
+  cwd: string,
+  runtime: OpenCode2Runtime,
+) {
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const result = yield* Effect.exit(
+    Effect.gen(function* () {
+      const connection = yield* runtime.connection;
+      const version = yield* verifyOpenCode2(connection);
+      const models = yield* runtime.models(cwd);
+      return { version, models };
+    }),
+  );
+  const presentation = {
+    ...OPENCODE_PRESENTATION,
+    showInteractionModeToggle: true,
+    supportsConversationRollback: true,
+  };
+  if (result._tag === "Failure")
+    return buildServerProvider({
+      presentation,
+      enabled: settings.enabled,
+      checkedAt,
+      models: [],
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          "Could not connect to OpenCode 2. Check the server URL, server password, and installed version.",
+      },
+    });
+  const models = result.value.models
+    .filter((model) => model.enabled)
+    .map((model) => ({
+      slug: `${model.providerID}/${model.id}`,
+      name: model.name,
+      isCustom: false,
+      capabilities: createModelCapabilities({
+        optionDescriptors: model.variants.length
+          ? [
+              {
+                id: "variant",
+                label: "Reasoning",
+                type: "select",
+                options: model.variants.map((variant) => ({ id: variant.id, label: variant.id })),
+              },
+            ]
+          : [],
+      }),
+    }));
+  return buildServerProvider({
+    presentation,
+    enabled: settings.enabled,
+    checkedAt,
+    models: providerModelsFromSettings(
+      models,
+      settings.customModels,
+      createModelCapabilities({ optionDescriptors: [] }),
+    ),
+    slashCommands: [COMPACT_SLASH_COMMAND],
+    probe: {
+      installed: true,
+      version: result.value.version,
+      status: models.length ? "ready" : "warning",
+      auth: { status: models.length ? "authenticated" : "unknown", type: "opencode" },
+      message: `OpenCode ${result.value.version}: ${models.length} models available.`,
+    },
+  });
+});
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause?: unknown;

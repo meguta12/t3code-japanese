@@ -58,7 +58,7 @@ afterEach(async () => {
 });
 
 describe("running model chip and overflow", () => {
-  it("opens the model/status list, excludes completed children and preserves dynamic names", async () => {
+  it("opens the model/status list, retains completed children and preserves dynamic names", async () => {
     const opened = vi.fn();
     await act(() =>
       root.render(
@@ -70,13 +70,13 @@ describe("running model chip and overflow", () => {
       ),
     );
     const trigger = container.querySelector<HTMLButtonElement>("button")!;
-    expect(trigger.textContent).toBe("actually-served＋委譲1＋サブ1");
+    expect(trigger.textContent).toBe("親actually-served＋サブ1");
     await act(() => trigger.click());
     const menu = document.querySelector('[role="menu"]')!;
     expect(menu.textContent).toContain("Done and copy");
     expect(menu.textContent).toContain("指定と異なります");
     expect(menu.textContent).toContain("delegate and copy");
-    expect(menu.textContent).not.toContain("finished");
+    expect(menu.textContent).toContain("finished");
     const delegated = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
       (item) => item.textContent?.includes("delegate and copy"),
     )!;

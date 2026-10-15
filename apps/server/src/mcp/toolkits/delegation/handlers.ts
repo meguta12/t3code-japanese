@@ -1,3 +1,4 @@
+import { deriveDelegationStatus } from "@t3tools/contracts";
 import {
   CommandId,
   DELEGATION_ORIGIN_ACTIVITY_KIND,
@@ -63,48 +64,28 @@ export function deriveDelegatedTaskStatus(
     "latestTurn" | "session" | "latestUserMessageAt" | "hasPendingApprovals" | "hasPendingUserInput"
   >,
 ): DelegatedTaskStatus {
-  if (
-    shell.session?.status === "stopped" &&
-    (shell.latestUserMessageAt === null || shell.session.updatedAt >= shell.latestUserMessageAt) &&
-    (shell.hasPendingApprovals ||
-      shell.hasPendingUserInput ||
-      shell.latestTurn?.state === "running")
-  )
-    return "interrupted";
-  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return "needs_user_action";
-  const turn = shell.latestTurn;
-  const queuedAt = shell.latestUserMessageAt;
-  if (queuedAt !== null && (turn === null || queuedAt > turn.requestedAt)) {
-    const session = shell.session;
-    if (session && session.updatedAt >= queuedAt) {
-      if (session.status === "error") return "error";
-      if (session.status === "stopped") return "interrupted";
-    }
-    return "running";
-  }
-  if (turn === null) {
-    if (shell.session?.status === "error") return "error";
-    if (shell.session?.status === "stopped") return "interrupted";
-    return "running";
-  }
-  if (turn.state === "running" && shell.session?.status === "stopped") return "interrupted";
-  return turn.state;
+  return deriveDelegationStatus(shell);
 }
 
-/** The child's answer: its latest turn's last assistant message, falling back to the last one overall. */
+/** Only report an answer belonging to the latest requested turn. */
 export function finalAssistantMessage(
-  thread: Pick<OrchestrationThread, "messages" | "latestTurn">,
+  thread: Pick<OrchestrationThread, "messages" | "latestTurn"> & {
+    readonly latestUserMessageAt?: string | null;
+  },
 ): string | undefined {
   const assistant = thread.messages.filter(
     (message) => message.role === "assistant" && message.text.trim().length > 0,
   );
   const latest = thread.latestTurn;
+  const latestRequestAt =
+    thread.latestUserMessageAt ??
+    thread.messages.filter((message) => message.role === "user").at(-1)?.createdAt;
+  if (latest === null || (latestRequestAt && latestRequestAt > latest.requestedAt))
+    return undefined;
   const chosen =
     (latest?.assistantMessageId
       ? assistant.find((message) => message.id === latest.assistantMessageId)
-      : undefined) ??
-    assistant.findLast((message) => latest !== null && message.turnId === latest.turnId) ??
-    assistant.at(-1);
+      : undefined) ?? assistant.findLast((message) => message.turnId === latest.turnId);
   if (!chosen) return undefined;
   return chosen.text.length > MAX_FINAL_MESSAGE_CHARS
     ? `${chosen.text.slice(0, MAX_FINAL_MESSAGE_CHARS)}\n[truncated: open the child thread for the full text]`

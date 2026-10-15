@@ -855,6 +855,36 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  it("settles a persisted unadopted start as interrupted on restart without rerunning it", async () => {
+    const harness = await createHarness({ deferReactorStart: true });
+    const threadId = ThreadId.make("thread-1");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("saved-pending"),
+        threadId,
+        message: {
+          messageId: asMessageId("saved-message"),
+          role: "user",
+          text: "queued",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: "2026-01-01T00:01:00.000Z",
+      }),
+    );
+    await harness.startReactor();
+    await harness.drain();
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(await Effect.runPromise(harness.snapshotQuery.listPendingTurnStarts())).toHaveLength(0);
+    const shell = await Effect.runPromise(
+      harness.snapshotQuery.getThreadShellById(threadId).pipe(Effect.map(Option.getOrThrow)),
+    );
+    expect(shell.session?.status).toBe("stopped");
+    expect(shell.session?.lastError).toContain("interrupted");
+  });
+
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -4365,7 +4395,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
@@ -4383,7 +4413,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -4416,7 +4446,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),

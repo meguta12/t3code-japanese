@@ -273,7 +273,7 @@ describe("deriveRunningModelStrip", () => {
     ]);
   });
 
-  it("keeps awaiting children but removes finished, failed and interrupted runs from the chip", () => {
+  it("keeps finished and interrupted children available alongside active children", () => {
     const view = deriveRunningModelStrip({
       ...base,
       delegatedRuns: [
@@ -285,6 +285,9 @@ describe("deriveRunningModelStrip", () => {
     });
     expect(view.delegated.map((chip) => [chip.statusLabel, chip.tone])).toEqual([
       ["要対応", "warning"],
+      ["中断", "neutral"],
+      ["完了", "neutral"],
+      ["エラー", "error"],
     ]);
   });
 

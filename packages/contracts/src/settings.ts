@@ -1216,6 +1216,10 @@ export const ServerSettings = Schema.Struct({
    * provider session is prepared, like the browser and device switches.
    */
   enableAgentDelegation: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Per-thread opt-in to useful delegation suggestions; explicit requests always take priority. */
+  delegationSuggestionOverrides: Schema.Record(TrimmedNonEmptyString, Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   /** Named delegation targets ("実装役") an agent or the user can ask for by name. Replaced as a whole. */
   delegationPresets: Schema.Array(DelegationPreset).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1574,6 +1578,9 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDelegation: Schema.optionalKey(Schema.Boolean),
+  delegationSuggestionOverrides: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, Schema.Boolean),
+  ),
   delegationPresets: Schema.optionalKey(Schema.Array(DelegationPreset)),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),

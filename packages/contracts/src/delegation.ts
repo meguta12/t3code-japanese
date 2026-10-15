@@ -44,3 +44,57 @@ export const DelegationOriginPayload = Schema.Struct({
   parentThreadId: ThreadId,
 });
 export type DelegationOriginPayload = typeof DelegationOriginPayload.Type;
+
+/** Common status rules for the parent UI and delegation tools. */
+export function deriveDelegationStatus(shell: {
+  readonly latestTurn: {
+    readonly state: "running" | "completed" | "error" | "interrupted";
+    readonly requestedAt: string;
+  } | null;
+  readonly session?: { readonly status: string; readonly updatedAt: string } | null | undefined;
+  readonly latestUserMessageAt: string | null;
+  readonly hasPendingTurnStart?: boolean | undefined;
+  readonly hasPendingApprovals: boolean;
+  readonly hasPendingUserInput: boolean;
+}): "running" | "completed" | "error" | "interrupted" | "needs_user_action" {
+  if (
+    shell.session?.status === "stopped" &&
+    (shell.latestUserMessageAt === null || shell.session.updatedAt >= shell.latestUserMessageAt) &&
+    (shell.hasPendingApprovals ||
+      shell.hasPendingUserInput ||
+      shell.latestTurn?.state === "running")
+  )
+    return "interrupted";
+  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return "needs_user_action";
+  const turn = shell.latestTurn;
+  const queuedAt = shell.latestUserMessageAt;
+  // A failed/cancelled follow-up is no longer pending, but still belongs to a
+  // newer request than the previous completed turn.
+  if (
+    queuedAt !== null &&
+    (turn === null || queuedAt > turn.requestedAt) &&
+    shell.session &&
+    shell.session.updatedAt >= queuedAt
+  ) {
+    if (shell.session.status === "error") return "error";
+    if (shell.session.status === "stopped") return "interrupted";
+  }
+  const queued =
+    shell.hasPendingTurnStart ??
+    (queuedAt !== null && (turn === null || queuedAt > turn.requestedAt));
+  if (queued) {
+    const session = shell.session;
+    if (session && (queuedAt === null || session.updatedAt >= queuedAt)) {
+      if (session.status === "error") return "error";
+      if (session.status === "stopped") return "interrupted";
+    }
+    return "running";
+  }
+  if (turn === null) {
+    if (shell.session?.status === "error") return "error";
+    if (shell.session?.status === "stopped") return "interrupted";
+    return "running";
+  }
+  if (turn.state === "running" && shell.session?.status === "stopped") return "interrupted";
+  return turn.state;
+}

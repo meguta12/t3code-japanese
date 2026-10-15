@@ -1,3 +1,15 @@
+import {
+  DelegationThreadGroup,
+  DelegationRoleBadge,
+  useDelegationTreeStore,
+} from "./sidebar/DelegationThreadGroup";
+import {
+  groupDelegationThreads,
+  visibleDelegationThreads,
+  delegationThreadKey,
+  delegationFamilyKey,
+  type DelegationRole,
+} from "../lib/delegationGroups";
 import { ja, jaTemplate } from "../lib/ja";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
@@ -972,6 +984,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 };
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
+  delegationRole?: DelegationRole | undefined;
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
   // Slim rows are either settled (action: un-settle) or merely quiet
@@ -1512,6 +1525,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         isRegeneratingTitle && "opacity-55",
       )}
     >
+      <DelegationRoleBadge role={props.delegationRole} />
       {thread.title}
     </span>
   );
@@ -2191,6 +2205,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
+  const collapsedFamilies = useDelegationTreeStore((state) => state.collapsedFamilies);
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -2823,15 +2838,21 @@ export default function Sidebar() {
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    () =>
+      groupDelegationThreads([
+        ...pinnedThreads,
+        ...activeThreads,
+        ...visibleSnoozedThreads,
+        ...renderedSettledThreads,
+      ]).flatMap((group) => group.members),
     [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
-      orderedThreads.map((thread) =>
+      visibleDelegationThreads(orderedThreads, collapsedFamilies).map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [orderedThreads],
+    [orderedThreads, collapsedFamilies],
   );
   // Rows call back into the click handler without carrying the ordered list as
   // a prop — a fresh array identity per shell update would defeat every row's
@@ -3438,8 +3459,14 @@ export default function Sidebar() {
     const settledRows = rowsOf(renderedSettledThreads, "settled");
     items.push({ kind: "marker", marker: "settled-placeholder" });
     items.push(...settledRows);
-    return items;
+    const rowsByKey = new Map(
+      items.flatMap((item) => (item.kind === "thread" ? [[item.key, item] as const] : [])),
+    );
+    const orderedRows = orderedThreads.map((thread) => rowsByKey.get(delegationThreadKey(thread))!);
+    let rowIndex = 0;
+    return items.map((item) => (item.kind === "thread" ? orderedRows[rowIndex++]! : item));
   }, [
+    orderedThreads,
     activeThreads,
     pinnedThreads,
     renderedSettledThreads,
@@ -3447,27 +3474,33 @@ export default function Sidebar() {
     snoozedThreads.length,
     visibleSnoozedThreads,
   ]);
+  const visibleSidebarListItems = useMemo(() => {
+    const visibleKeys = new Set(orderedThreadKeys);
+    return sidebarListItems.filter((item) => item.kind !== "thread" || visibleKeys.has(item.key));
+  }, [sidebarListItems, orderedThreadKeys]);
   useEffect(() => {
     if (
       dragState !== null &&
-      !sidebarListItems.some((item) => item.kind === "thread" && item.key === dragState.activeKey)
+      !visibleSidebarListItems.some(
+        (item) => item.kind === "thread" && item.key === dragState.activeKey,
+      )
     ) {
       cancelThreadDrag();
     }
-  }, [cancelThreadDrag, dragState, sidebarListItems]);
+  }, [cancelThreadDrag, dragState, visibleSidebarListItems]);
   const listMotionPaused = dragState !== null;
-  // Every shell event rebuilds sidebarListItems, but rows only move when the
+  // Every shell event rebuilds visibleSidebarListItems, but rows only move when the
   // rendered order or a row's section changes. Keying the motion pass on that
   // keeps ordinary updates from forcing a layout read and animating rows
   // whose position drifted for other reasons.
   const sidebarListOrderKey = useMemo(
     () =>
-      sidebarListItems
+      visibleSidebarListItems
         .map((item) => (item.kind === "thread" ? `${item.key}:${item.section}` : item.marker))
         .join("\0"),
-    [sidebarListItems],
+    [visibleSidebarListItems],
   );
-  const sidebarListHasRows = sidebarListItems.length + visibleDraftSessionCount > 0;
+  const sidebarListHasRows = visibleSidebarListItems.length + visibleDraftSessionCount > 0;
   useLayoutEffect(() => {
     // Drag release clears the baseline, so its commit cannot replay the
     // sortable preview; rows glide from their released positions instead.
@@ -3485,7 +3518,11 @@ export default function Sidebar() {
   const handleThreadDragOver = useCallback(
     (event: DragOverEvent) => {
       const target = event.over
-        ? resolveSidebarDropTarget(sidebarListItems, String(event.active.id), String(event.over.id))
+        ? resolveSidebarDropTarget(
+            visibleSidebarListItems,
+            String(event.active.id),
+            String(event.over.id),
+          )
         : null;
       setDragState((current) =>
         current === null || current.activeKey !== String(event.active.id)
@@ -3493,9 +3530,12 @@ export default function Sidebar() {
           : { ...current, targetSection: target?.section ?? null },
       );
     },
-    [sidebarListItems],
+    [visibleSidebarListItems],
   );
-  const sortableIds = useMemo(() => sidebarListItems.map(sidebarListItemId), [sidebarListItems]);
+  const sortableIds = useMemo(
+    () => visibleSidebarListItems.map(sidebarListItemId),
+    [visibleSidebarListItems],
+  );
   const draggedSettledOrder = useMemo(() => {
     const thread = dragState === null ? undefined : threadByKey.get(dragState.activeKey);
     if (dragState === null || thread === undefined) return [];
@@ -3506,12 +3546,26 @@ export default function Sidebar() {
       applySidebarThreadDrop(thread, "settled", dragState.occurredAt),
     ]).map(key);
   }, [dragState, settledThreads, threadByKey]);
+  const collapsedThreadKeys = useMemo(
+    () =>
+      new Set(
+        threads
+          .filter(
+            (thread) =>
+              thread.delegationParentThreadId != null &&
+              collapsedFamilies.has(delegationFamilyKey(thread)),
+          )
+          .map(delegationThreadKey),
+      ),
+    [threads, collapsedFamilies],
+  );
   const sidebarSortingStrategy = useMemo(
     () =>
       createSidebarSortingStrategy({
-        items: sidebarListItems,
+        items: visibleSidebarListItems,
         boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
         settledOrder: draggedSettledOrder,
+        hiddenThreadKeys: collapsedThreadKeys,
         settledExpanded: settledShelfExpanded,
         settledVisibleCount,
         routeThreadKey,
@@ -3519,10 +3573,11 @@ export default function Sidebar() {
       }),
     [
       draggedSettledOrder,
+      collapsedThreadKeys,
       routeThreadKey,
       settledShelfExpanded,
       settledVisibleCount,
-      sidebarListItems,
+      visibleSidebarListItems,
       snoozedThreads.length,
     ],
   );
@@ -3555,7 +3610,7 @@ export default function Sidebar() {
     if (source === undefined) return createSidebarCollisionDetection(() => false);
     return createSidebarCollisionDetection(
       (id) => {
-        const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
+        const target = resolveSidebarDropTarget(visibleSidebarListItems, draggedThreadKey, id);
         if (target === null) return false;
         return (
           planSidebarThreadDrop({
@@ -3577,7 +3632,7 @@ export default function Sidebar() {
         );
       },
       {
-        items: sidebarListItems,
+        items: visibleSidebarListItems,
         activationY: dragActivationY ?? null,
       },
     );
@@ -3592,7 +3647,7 @@ export default function Sidebar() {
     dragActivationY,
     draggableThreadKeys,
     pinnedKeys,
-    sidebarListItems,
+    visibleSidebarListItems,
     threadByKey,
   ]);
   const handleThreadDragEnd = useCallback(
@@ -3602,7 +3657,7 @@ export default function Sidebar() {
       const target =
         event.over === null
           ? null
-          : resolveSidebarDropTarget(sidebarListItems, activeKey, String(event.over.id));
+          : resolveSidebarDropTarget(visibleSidebarListItems, activeKey, String(event.over.id));
       const activeThread = threadByKey.get(activeKey);
       if (activeSection === undefined || target === null || activeThread === undefined) return;
       const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
@@ -3749,7 +3804,7 @@ export default function Sidebar() {
       reorderActiveThread,
       sectionByThreadKey,
       settleThread,
-      sidebarListItems,
+      visibleSidebarListItems,
       threadByKey,
       unpinThread,
       unsettleThread,
@@ -4376,6 +4431,7 @@ export default function Sidebar() {
         navigateToThreadKey(
           resolveAdjacentThreadId({
             threadIds: orderedThreadKeys,
+            allThreadIds: orderedThreads.map(delegationThreadKey),
             currentThreadId: routeThreadKey,
             direction: traversalDirection,
           }),
@@ -4391,6 +4447,7 @@ export default function Sidebar() {
   }, [
     keybindings,
     navigateToThread,
+    orderedThreads,
     orderedThreadKeys,
     routeTerminalOpen,
     routeThreadKey,
@@ -4731,6 +4788,7 @@ export default function Sidebar() {
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
                         sortable?: SortableThreadRowBag,
+                        delegationRole?: DelegationRole,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -4747,6 +4805,7 @@ export default function Sidebar() {
                             // sortable wrapper keeps its identity during a drag.
                             key={`${threadKey}:${rowVariant}`}
                             thread={thread}
+                            delegationRole={delegationRole}
                             variant={rowVariant}
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={
@@ -4838,6 +4897,7 @@ export default function Sidebar() {
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
+                        delegationRole?: DelegationRole,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -4852,7 +4912,7 @@ export default function Sidebar() {
                               optimisticDrop !== null
                             }
                           >
-                            {(bag) => renderThreadRowInner(thread, section, bag)}
+                            {(bag) => renderThreadRowInner(thread, section, bag, delegationRole)}
                           </SortableThreadRow>
                         );
                       };
@@ -4867,9 +4927,60 @@ export default function Sidebar() {
                           onNavigateToDraft={navigateToDraft}
                         />,
                       ];
+                      const familyGroups = groupDelegationThreads(
+                        sidebarListItems.flatMap((item) =>
+                          item.kind === "thread" ? [threadByKey.get(item.key)!] : [],
+                        ),
+                      );
+                      const familyByMember = new Map(
+                        familyGroups.flatMap((group) =>
+                          group.members.map(
+                            (thread) => [delegationThreadKey(thread), group] as const,
+                          ),
+                        ),
+                      );
+                      const sectionByMember = new Map(
+                        sidebarListItems.flatMap((item) =>
+                          item.kind === "thread"
+                            ? [
+                                [
+                                  delegationThreadKey(threadByKey.get(item.key)!),
+                                  item.section,
+                                ] as const,
+                              ]
+                            : [],
+                        ),
+                      );
+                      const renderedFamilies = new Set<string>();
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          const thread = threadByKey.get(item.key)!;
+                          const group = familyByMember.get(delegationThreadKey(thread))!;
+                          if (group.isFamily) {
+                            if (renderedFamilies.has(group.key)) continue;
+                            renderedFamilies.add(group.key);
+                            items.push(
+                              <DelegationThreadGroup
+                                asListItem
+                                key={group.key}
+                                familyKey={group.key}
+                                hasParent={group.members.some(
+                                  (member) => member.delegationParentThreadId == null,
+                                )}
+                              >
+                                {group.members.map((member) =>
+                                  renderThreadRow(
+                                    member,
+                                    sectionByMember.get(delegationThreadKey(member)) ??
+                                      item.section,
+                                    member.delegationParentThreadId ? "child" : "parent",
+                                  ),
+                                )}
+                              </DelegationThreadGroup>,
+                            );
+                          } else {
+                            items.push(renderThreadRow(thread, item.section));
+                          }
                           continue;
                         }
                         switch (item.marker) {

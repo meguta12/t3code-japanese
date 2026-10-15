@@ -265,6 +265,24 @@ describe("resolveDelegationTarget effort", () => {
 });
 
 describe("resolveDelegationTarget presets", () => {
+  it("rejects a saved effort that disappeared from the live model catalog", () => {
+    const limited = [
+      provider("codex", "codex", "Codex", [
+        model("gpt-6.1-sol", "Sol", {
+          optionDescriptors: [
+            effortDescriptor("reasoningEffort", [
+              ["low", "Low"],
+              ["high", "High"],
+            ]),
+          ],
+        }),
+      ]),
+    ];
+    const result = resolve({ preset: "実装役" }, limited);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("preset_unavailable");
+  });
+
   it.each(["実装役", " 実装役 ", "impl"])("resolves the preset spelled %j", (spelling) => {
     const target = okTarget({ preset: spelling });
     expect(target).toMatchObject({

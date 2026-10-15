@@ -40,6 +40,58 @@ const shell = (overrides: Partial<DelegatedChildShell> = {}): DelegatedChildShel
 });
 
 describe("deriveDelegatedRunStatus", () => {
+  it("preserves a follow-up's failure or cancellation after its pending slot is cleared", () => {
+    for (const [status, expected] of [
+      ["error", "error"],
+      ["stopped", "interrupted"],
+    ] as const) {
+      expect(
+        deriveDelegatedRunStatus(
+          shell({
+            hasPendingTurnStart: false,
+            latestUserMessageAt: "2026-10-06T10:01:00.000Z",
+            session: { status, updatedAt: "2026-10-06T10:02:00.000Z" },
+          }),
+        ),
+      ).toBe(expected);
+    }
+  });
+
+  it("does not keep a cancelled queued message running after the previous turn completes", () => {
+    expect(
+      deriveDelegatedRunStatus(
+        shell({ latestUserMessageAt: "2026-10-06T10:01:00.000Z", hasPendingTurnStart: false }),
+      ),
+    ).toBe("completed");
+  });
+
+  it("reports startup failure and pre-start cancellation instead of running forever", () => {
+    expect(
+      deriveDelegatedRunStatus(
+        shell({
+          latestTurn: null,
+          session: { status: "error", updatedAt: "2026-10-06T10:00:00.000Z" },
+        }),
+      ),
+    ).toBe("error");
+    expect(
+      deriveDelegatedRunStatus(
+        shell({
+          latestTurn: null,
+          session: { status: "stopped", updatedAt: "2026-10-06T10:00:00.000Z" },
+        }),
+      ),
+    ).toBe("interrupted");
+    expect(
+      deriveDelegatedRunStatus(
+        shell({
+          latestUserMessageAt: "2026-10-06T10:01:00.000Z",
+          session: { status: "stopped", updatedAt: "2026-10-06T10:02:00.000Z" },
+        }),
+      ),
+    ).toBe("interrupted");
+  });
+
   it("follows the latest turn state", () => {
     expect(deriveDelegatedRunStatus(shell())).toBe("completed");
     expect(
@@ -133,6 +185,7 @@ describe("deriveDelegatedRuns", () => {
     expect(runs).toEqual([
       {
         threadId: child("c2"),
+        title: "[委譲] 実装",
         instanceId: codex,
         model: "gpt-6.1-sol",
         effort: "ultra",
@@ -155,6 +208,7 @@ describe("deriveDelegatedRuns", () => {
     expect(runs).toEqual([
       {
         threadId: child("c1"),
+        title: "[委譲] 実装",
         instanceId: codex,
         model: "gpt-6.1-sol",
         effort: "ultra",

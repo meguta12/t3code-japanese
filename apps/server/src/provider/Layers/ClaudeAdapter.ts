@@ -260,6 +260,7 @@ interface ClaudeResumeState {
 }
 
 interface ClaudeTurnState {
+  reportedModel?: string;
   readonly turnId: TurnId;
   readonly startedAt: string;
   /**
@@ -3432,6 +3433,26 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
+    const actualModel = trimmedString(message.message.model);
+    if (actualModel && context.turnState && context.turnState.reportedModel !== actualModel) {
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "model.rerouted",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        turnId: context.turnState.turnId,
+        payload: {
+          fromModel: context.turnState.reportedModel ?? context.currentApiModelId ?? actualModel,
+          toModel: actualModel,
+          reason: "Reported by the Claude SDK assistant response",
+        },
+        providerRefs: {},
+      });
+      context.turnState.reportedModel = actualModel;
+    }
+
     const content = message.message?.content;
     if (Array.isArray(content)) {
       for (const block of content) {
@@ -5268,12 +5289,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         createdAt: turnStartedStamp.createdAt,
         threadId: context.session.threadId,
         turnId,
-        payload: modelSelection?.model
-          ? {
-              model: modelSelection.model,
-              ...(context.currentEffort ? { effort: context.currentEffort } : {}),
-            }
-          : {},
+        payload: {},
         providerRefs: {},
       });
     }

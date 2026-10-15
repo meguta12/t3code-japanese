@@ -1556,6 +1556,29 @@ const make = Effect.gen(function* () {
     }
     const session = thread.session;
     if (!session || session.status === "stopped") {
+      const pending = (yield* projectionSnapshotQuery.listPendingTurnStarts()).find(
+        (entry) => entry.threadId === thread.id,
+      );
+      if (pending) {
+        yield* setThreadSession({
+          threadId: thread.id,
+          session: {
+            ...(session ?? {
+              threadId: thread.id,
+              providerName: null,
+              providerInstanceId: thread.modelSelection.instanceId,
+              runtimeMode: thread.runtimeMode,
+            }),
+            status: "stopped",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: event.payload.createdAt,
+          },
+          createdAt: event.payload.createdAt,
+        });
+        return;
+      }
+      if (session?.status === "stopped") return;
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
@@ -1969,6 +1992,54 @@ const make = Effect.gen(function* () {
           reasonCount: cause.reasons.length,
         }).pipe(Effect.as({ interruptedRegenerations: [], refinementThreadIds: [] }));
       }),
+    );
+    // This runs before accepting live events. A saved request without an adopted
+    // provider turn must be explicitly retried, never silently executed twice.
+    yield* Effect.gen(function* () {
+      const pendingStarts = yield* projectionSnapshotQuery.listPendingTurnStarts();
+      for (const pending of pendingStarts) {
+        const thread = yield* resolveThreadShell(pending.threadId);
+        if (!thread) continue;
+        const createdAt = DateTime.formatIso(yield* DateTime.now);
+        if (thread.latestTurn?.state === "running") {
+          yield* appendProviderFailureActivity({
+            threadId: thread.id,
+            kind: "provider.turn.start.failed",
+            summary: "Queued follow-up interrupted by server restart",
+            detail:
+              "The queued follow-up was cancelled; the existing running turn retains its restart recovery state.",
+            requestId: pending.messageId,
+            turnId: null,
+            createdAt,
+          });
+          continue;
+        }
+        yield* setThreadSession({
+          threadId: thread.id,
+          session: {
+            ...(thread.session ?? {
+              threadId: thread.id,
+              providerName: null,
+              providerInstanceId: thread.modelSelection.instanceId,
+              runtimeMode: thread.runtimeMode,
+            }),
+            status: "stopped",
+            activeTurnId: null,
+            lastError:
+              "A pending message was interrupted by the server restart. Send a new instruction to retry.",
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+      }
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("Could not reconcile interrupted pending turns", {
+              cause: Cause.pretty(cause),
+            }),
+      ),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (

@@ -276,6 +276,15 @@ export interface ProjectionSnapshotQueryShape {
    * Read one requested message and whether another non-compaction user message exists.
    * Newer queued messages count too, preserving first-turn title eligibility.
    */
+  readonly listPendingTurnStarts: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly requestedAt: string;
+    }>,
+    ProjectionRepositoryError
+  >;
+
   readonly getTurnStartMessage: (input: {
     readonly threadId: ThreadId;
     readonly messageId: MessageId;

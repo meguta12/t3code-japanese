@@ -777,6 +777,8 @@ export function getSidebarThreadIdsToPrewarm<TThreadId>(
 export function resolveAdjacentThreadId<T>(input: {
   threadIds: readonly T[];
   currentThreadId: T | null;
+  /** Full order retains a navigation origin when the current child is collapsed. */
+  allThreadIds?: readonly T[];
   direction: ThreadTraversalDirection;
 }): T | null {
   const { currentThreadId, direction, threadIds } = input;
@@ -791,6 +793,15 @@ export function resolveAdjacentThreadId<T>(input: {
 
   const currentIndex = threadIds.indexOf(currentThreadId);
   if (currentIndex === -1) {
+    const fullOrder = input.allThreadIds ?? [];
+    const hiddenIndex = fullOrder.indexOf(currentThreadId);
+    if (hiddenIndex === -1) return null;
+    const visible = new Set(threadIds);
+    const step = direction === "previous" ? -1 : 1;
+    for (let index = hiddenIndex + step; index >= 0 && index < fullOrder.length; index += step) {
+      const candidate = fullOrder[index]!;
+      if (visible.has(candidate)) return candidate;
+    }
     return null;
   }
 

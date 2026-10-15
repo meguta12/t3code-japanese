@@ -28,6 +28,8 @@ import {
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
+import { openCode2Request, type OpenCode2Runtime } from "../provider/OpenCode2Runtime.ts";
+import { openCode2Model } from "../provider/Layers/OpenCode2Adapter.ts";
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
@@ -172,6 +174,7 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
 
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
   openCodeSettings: OpenCodeSettings,
+  openCode2?: OpenCode2Runtime,
 ) {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
@@ -318,8 +321,18 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       }),
     );
 
-    const serverOutput =
-      openCodeSettings.serverUrl.length > 0
+    const serverOutput = openCode2
+      ? openCode2.connection.pipe(
+          Effect.flatMap(({ client }) =>
+            openCode2Request("generate.text", (signal) =>
+              client.generate.text(
+                { prompt: input.prompt, model: openCode2Model(input.modelSelection) },
+                { signal },
+              ),
+            ).pipe(Effect.map((result) => result.text)),
+          ),
+        )
+      : openCodeSettings.serverUrl.length > 0
         ? openCodeRuntime
             .connectToOpenCodeServer({
               binaryPath: openCodeSettings.binaryPath,

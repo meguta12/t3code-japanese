@@ -835,3 +835,38 @@ describe("lifted card clearance", () => {
     expect(511 + apply(511, 36, -500, 136, 114).y).toBe(250);
   });
 });
+
+it("pages settled rows before excluding collapsed children without filling their slots with unmounted rows", () => {
+  const fullOrder = [
+    "parent",
+    "child",
+    ...Array.from({ length: 8 }, (_, i) => `filler-${i}`),
+    "overflow",
+    "route",
+  ];
+  const rendered = [...fullOrder.slice(0, 10).filter((key) => key !== "child"), "route"];
+  const items = [
+    pinnedHeader,
+    divider,
+    marker("active-placeholder"),
+    thread("active", "active"),
+    settledHeader,
+    ...rendered.map((key) => thread(key, "settled")),
+  ];
+  const input = {
+    items,
+    settledOrder: fullOrder,
+    settledExpanded: true,
+    settledVisibleCount: 10,
+    routeThreadKey: "route",
+    hiddenThreadKeys: new Set(["child"]),
+  };
+  const actual = preview(input, "active", sidebarMarkerId("pinned-header"));
+  const expected = preview(
+    { ...input, settledOrder: rendered, settledVisibleCount: rendered.length },
+    "active",
+    sidebarMarkerId("pinned-header"),
+  );
+  expect(actual.get("route")).toEqual(expected.get("route"));
+  expect(actual.get("route")?.y).toBe(36);
+});

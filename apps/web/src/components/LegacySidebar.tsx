@@ -1,3 +1,13 @@
+import {
+  DelegationThreadGroup,
+  DelegationRoleBadge,
+  useDelegationTreeStore,
+} from "./sidebar/DelegationThreadGroup";
+import {
+  groupDelegationThreads,
+  visibleDelegationThreads,
+  type DelegationRole,
+} from "../lib/delegationGroups";
 import { ja, jaTemplate } from "../lib/ja";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -314,6 +324,7 @@ function buildThreadJumpLabelMap(input: {
 }
 
 interface SidebarThreadRowProps {
+  delegationRole?: DelegationRole | undefined;
   thread: SidebarThreadSummary;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
@@ -794,6 +805,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     className="min-w-0 flex-1 truncate text-sm"
                     data-testid={`thread-title-${thread.id}`}
                   >
+                    <DelegationRoleBadge role={props.delegationRole} />
                     {thread.title}
                   </span>
                 }
@@ -1066,37 +1078,58 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         </SidebarMenuSubItem>
       ) : null}
       {shouldShowThreadPanel &&
-        renderedThreads.map((thread) => {
-          const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-          return (
-            <SidebarThreadRow
-              key={threadKey}
-              thread={thread}
-              orderedProjectThreadKeys={orderedProjectThreadKeys}
-              isActive={activeRouteThreadKey === threadKey}
-              openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-              jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
-              appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
-              renamingThreadKey={renamingThreadKey}
-              renamingTitle={renamingTitle}
-              setRenamingTitle={setRenamingTitle}
-              startThreadRename={startThreadRename}
-              renamingInputRef={renamingInputRef}
-              renamingCommittedRef={renamingCommittedRef}
-              confirmingArchiveThreadKey={confirmingArchiveThreadKey}
-              setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
-              confirmArchiveButtonRefs={confirmArchiveButtonRefs}
-              handleThreadClick={handleThreadClick}
-              navigateToThread={navigateToThread}
-              onFileDropThreads={onFileDropThreads}
-              handleMultiSelectContextMenu={handleMultiSelectContextMenu}
-              handleThreadContextMenu={handleThreadContextMenu}
-              clearSelection={clearSelection}
-              commitRename={commitRename}
-              cancelRename={cancelRename}
-              attemptArchiveThread={attemptArchiveThread}
-              openPrLink={openPrLink}
-            />
+        groupDelegationThreads(renderedThreads).map((group) => {
+          const rows = group.members.map((thread) => {
+            const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+            return (
+              <SidebarThreadRow
+                key={threadKey}
+                thread={thread}
+                delegationRole={
+                  group.isFamily
+                    ? thread.delegationParentThreadId
+                      ? "child"
+                      : "parent"
+                    : undefined
+                }
+                orderedProjectThreadKeys={orderedProjectThreadKeys}
+                isActive={activeRouteThreadKey === threadKey}
+                openPullRequestsInRightPanel={openPullRequestsInRightPanel}
+                jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
+                appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
+                renamingThreadKey={renamingThreadKey}
+                renamingTitle={renamingTitle}
+                setRenamingTitle={setRenamingTitle}
+                startThreadRename={startThreadRename}
+                renamingInputRef={renamingInputRef}
+                renamingCommittedRef={renamingCommittedRef}
+                confirmingArchiveThreadKey={confirmingArchiveThreadKey}
+                setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
+                confirmArchiveButtonRefs={confirmArchiveButtonRefs}
+                handleThreadClick={handleThreadClick}
+                navigateToThread={navigateToThread}
+                onFileDropThreads={onFileDropThreads}
+                handleMultiSelectContextMenu={handleMultiSelectContextMenu}
+                handleThreadContextMenu={handleThreadContextMenu}
+                clearSelection={clearSelection}
+                commitRename={commitRename}
+                cancelRename={cancelRename}
+                attemptArchiveThread={attemptArchiveThread}
+                openPrLink={openPrLink}
+              />
+            );
+          });
+          return group.isFamily ? (
+            <DelegationThreadGroup
+              key={group.key}
+              familyKey={group.key}
+              hasParent={group.members.some((member) => member.delegationParentThreadId == null)}
+              asListItem
+            >
+              {rows}
+            </DelegationThreadGroup>
+          ) : (
+            rows
           );
         })}
 
@@ -1344,6 +1377,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
 
+  const collapsedFamilies = useDelegationTreeStore((state) => state.collapsedFamilies);
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
       projectThreads.map((thread, index) => [
@@ -1362,18 +1396,27 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const visibleProjectThreads = sortThreads(activeProjectThreads, threadSortOrder);
+    const visibleProjectThreads = groupDelegationThreads(
+      sortThreads(activeProjectThreads, threadSortOrder),
+    ).flatMap((group) => group.members);
     const projectStatus = resolveProjectStatusIndicator(
       visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
     );
     return {
-      orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
+      orderedProjectThreadKeys: visibleDelegationThreads(
+        visibleProjectThreads,
+        collapsedFamilies,
+      ).map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
       projectStatus,
       visibleProjectThreads,
     };
-  }, [activeProjectThreads, projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [
+    activeProjectThreads,
+    projectThreads,
+    threadLastVisitedAts,
+    threadSortOrder,
+    collapsedFamilies,
+  ]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -3222,6 +3265,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 });
 
 export default function LegacySidebar() {
+  const collapsedFamilies = useDelegationTreeStore((state) => state.collapsedFamilies);
   const projects = useProjects();
   const sidebarThreads = useThreadShells();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
@@ -3572,21 +3616,23 @@ export default function LegacySidebar() {
     visibleThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
-  const visibleSidebarThreadKeys = useMemo(
+  const allSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
-        const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) =>
-              thread.archivedAt === null &&
-              !isCompletedWork(
-                thread,
-                serverConfigs.get(thread.environmentId)?.environment.capabilities
-                  .threadSettlement === true,
-              ),
+        const projectThreads = groupDelegationThreads(
+          sortThreads(
+            (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+              (thread) =>
+                thread.archivedAt === null &&
+                !isCompletedWork(
+                  thread,
+                  serverConfigs.get(thread.environmentId)?.environment.capabilities
+                    .threadSettlement === true,
+                ),
+            ),
+            sidebarThreadSortOrder,
           ),
-          sidebarThreadSortOrder,
-        );
+        ).flatMap((group) => group.members);
         const projectExpanded = resolveProjectExpanded(
           projectExpandedById,
           projectExpansionPreferenceKeys(project),
@@ -3627,6 +3673,14 @@ export default function LegacySidebar() {
       serverConfigs,
     ],
   );
+  const visibleSidebarThreadKeys = useMemo(() => {
+    const visibleKeys = new Set(
+      visibleDelegationThreads(visibleThreads, collapsedFamilies).map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    );
+    return allSidebarThreadKeys.filter((key) => visibleKeys.has(key));
+  }, [allSidebarThreadKeys, visibleThreads, collapsedFamilies]);
   const threadJumpCommandByKey = useMemo(() => {
     const mapping = new Map<string, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     for (const [visibleThreadIndex, threadKey] of visibleSidebarThreadKeys.entries()) {
@@ -3703,6 +3757,7 @@ export default function LegacySidebar() {
       if (traversalDirection !== null) {
         const targetThreadKey = resolveAdjacentThreadId({
           threadIds: orderedSidebarThreadKeys,
+          allThreadIds: allSidebarThreadKeys,
           currentThreadId: routeThreadKey,
           direction: traversalDirection,
         });
@@ -3749,6 +3804,7 @@ export default function LegacySidebar() {
     keybindings,
     navigateToThread,
     orderedSidebarThreadKeys,
+    allSidebarThreadKeys,
     platform,
     routeThreadKey,
     sidebarThreadByKey,

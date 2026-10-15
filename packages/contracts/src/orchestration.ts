@@ -810,6 +810,8 @@ export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
+  delegationParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  hasPendingTurnStart: Schema.optional(Schema.Boolean),
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
@@ -901,6 +903,8 @@ export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
+  delegationParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  hasPendingTurnStart: Schema.optional(Schema.Boolean),
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,

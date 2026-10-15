@@ -3,7 +3,7 @@ When the t3-code MCP server exposes link_pull_request, you must use it to regist
 </pull_request_linking>`;
 
 const DELEGATION_INSTRUCTIONS = `<task_delegation>
-When the t3-code MCP server exposes delegate_task and the user asks you to implement, review, or run something with a different model, provider, effort level, or a named preset (for example "have GPT-6.1 Sol do this at ultra effort" or "give it to the 実装役 preset"), do not do that work yourself. First call list_models to see the valid names and the saved presets, then call delegate_task with the full instruction (the other agent has not seen this conversation) and preset, or provider, model and effort. Tell the user the child thread title and the model and effort it resolved to. If delegate_task rejects a name, show the user the valid choices instead of picking a different model. Collect the result with wait_delegated_task (call it again while it reports running) and report it. If it reports needs_user_action, ask the user to open that thread. Use send_to_delegated_task for follow-ups and stop_delegated_task to cancel. Never delegate from a thread that was itself delegated.
+When the t3-code MCP server exposes delegate_task and the user asks you to implement, review, or run something with a different model, provider, effort level, or a named preset (for example "have GPT-6.1 Sol do this at ultra effort" or "give it to the 実装役 preset"), do not do that work yourself. First call list_models to see the valid names and the saved presets, then call delegate_task with the full instruction (the other agent has not seen this conversation) and preset, or provider, model and effort. Tell the user the child thread title and the model and effort it resolved to. If delegate_task rejects a name, show the user the valid choices instead of picking a different model. Collect the result with wait_delegated_task (call it again while it reports running) and report it. If it reports needs_user_action, ask the user to open that thread. Use send_to_delegated_task for follow-ups and stop_delegated_task to cancel. Never delegate from a thread that was itself delegated. Do not proactively suggest splitting work unless the current turn policy enables delegation suggestions. Follow explicit user instructions to delegate or split work without asking for the same permission again.
 </task_delegation>`;
 
 /**
@@ -29,4 +29,15 @@ export function buildRuntimeInstructions(runtime: {
 
 function toSingleLine(value: string): string {
   return value.replaceAll(/\s+/g, " ").trim();
+}
+
+/** Sent on each turn so changing the conversation switch reaches an existing session. */
+export function buildDelegationPolicyInstructions(suggestionsEnabled: boolean): string {
+  return `<t3_delegation_policy>
+Delegation suggestions are ${suggestionsEnabled ? "ON" : "OFF"} for this conversation. ${
+    suggestionsEnabled
+      ? "When a separate model would materially help the task, briefly propose the work, model and benefit, then wait for the user's agreement before creating a child. Do not ask on every turn or repeat a declined proposal without new reasons."
+      : "Do not proactively propose delegation; continue work in this conversation."
+  } An explicit user request to use another model or split work automatically takes priority over this suggestion switch and does not need repeated confirmation. Never delegate from a delegated child.
+</t3_delegation_policy>`;
 }

@@ -240,6 +240,9 @@ export interface OpenCodeRuntimeShape {
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
+    /** A newer protocol supplies its own health check; the 1.x default is unchanged. */
+    readonly verify?: (url: string) => Effect.Effect<string, OpenCodeRuntimeError>;
+    readonly stdio?: boolean;
   }) => Effect.Effect<OpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
   /**
    * Returns a handle to either an externally-managed OpenCode server (when
@@ -286,10 +289,17 @@ export interface OpenCodeRuntimeShape {
   }) => Effect.Effect<ReadonlyArray<OpenCodeSkill>, OpenCodeRuntimeError>;
 }
 
+const decodePrivateServerReady = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ url: Schema.String })),
+);
+
 function parseServerUrlFromOutput(output: string): string | null {
   for (const line of output.split("\n")) {
     const match = line.match(/server listening on\s+(https?:\/\/[^\s]+)/i);
     if (match?.[1]) return match[1];
+    // The 2.x private-server lease reports its address as one JSON line.
+    const ready = decodePrivateServerReady(line);
+    if (Option.isSome(ready) && /^https?:\/\//.test(ready.value.url)) return ready.value.url;
   }
   return null;
 }
@@ -682,6 +692,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         ));
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
       const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
+      if (input.stdio) args.push("--stdio");
       const spawnCommand = yield* resolveCommand(input.binaryPath, args, input.environment);
       const serverPassword = resolveOpenCodeServerPassword({
         external: false,
@@ -694,6 +705,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ChildProcess.make(spawnCommand.command, spawnCommand.args, {
             detached: hostPlatform !== "win32",
             shell: spawnCommand.shell,
+            ...(input.stdio ? { cwd: input.directory, stdin: "pipe" as const } : {}),
             env: {
               ...input.environment,
               ...(serverPassword !== undefined ? { OPENCODE_SERVER_PASSWORD: serverPassword } : {}),
@@ -837,13 +849,15 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       yield* Ref.set(stderrRef, null);
 
       const url = readyOption.value;
-      const version = yield* verifyOpenCodeServerVersion(
-        createOpenCodeSdkClient({
-          baseUrl: url,
-          directory: input.directory,
-          ...(serverPassword !== undefined ? { serverPassword } : {}),
-        }),
-      );
+      const version = yield* input.verify
+        ? input.verify(url)
+        : verifyOpenCodeServerVersion(
+            createOpenCodeSdkClient({
+              baseUrl: url,
+              directory: input.directory,
+              ...(serverPassword !== undefined ? { serverPassword } : {}),
+            }),
+          );
 
       return {
         url,

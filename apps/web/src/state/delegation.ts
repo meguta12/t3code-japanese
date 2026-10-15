@@ -1,3 +1,8 @@
+import {
+  createDelegationColorMap,
+  delegationFamilyKey,
+  fallbackDelegationColor,
+} from "../lib/delegationGroups";
 import { useAtomValue } from "@effect/atom-react";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import {
@@ -48,6 +53,8 @@ export function selectUnloadedChildShells(
     if (!wanted.has(shell.id)) continue;
     found.set(shell.id, {
       modelSelection: shell.modelSelection,
+      session: shell.session,
+      hasPendingTurnStart: shell.hasPendingTurnStart,
       latestTurn:
         shell.latestTurn === null
           ? null
@@ -200,6 +207,7 @@ export function useDelegatedRuns(ref: ScopedThreadRef | null): ReadonlyArray<Del
 export interface DelegationOrigin {
   readonly parentThreadId: ThreadId;
   readonly parentTitle: string;
+  readonly parentModel: string;
 }
 
 const NO_ORIGIN_ATOM = Atom.make<DelegationOrigin | null>(null).pipe(
@@ -211,7 +219,10 @@ const delegationOriginAtomFamily = Atom.family((key: string) => {
   let previous: DelegationOrigin | null = null;
   return Atom.make((get) => {
     const detail = get(environmentThreadDetails.detailAtom(ref));
-    const parentThreadId = detail === null ? null : deriveDelegationOrigin(detail.activities);
+    const shell = get(environmentThreadShells.threadShellAtom(ref));
+    const parentThreadId =
+      shell?.delegationParentThreadId ??
+      (detail === null ? null : deriveDelegationOrigin(detail.activities));
     // A parent that no longer exists leaves nothing to link to.
     const parent =
       parentThreadId === null
@@ -225,10 +236,11 @@ const delegationOriginAtomFamily = Atom.family((key: string) => {
     const next =
       parentThreadId === null || parent === null
         ? null
-        : { parentThreadId, parentTitle: parent.title };
+        : { parentThreadId, parentTitle: parent.title, parentModel: parent.modelSelection.model };
     if (
       previous?.parentThreadId === next?.parentThreadId &&
-      previous?.parentTitle === next?.parentTitle
+      previous?.parentTitle === next?.parentTitle &&
+      previous?.parentModel === next?.parentModel
     ) {
       return previous;
     }
@@ -240,4 +252,43 @@ const delegationOriginAtomFamily = Atom.family((key: string) => {
 /** The parent a delegated child thread came from, or null for an ordinary thread. */
 export function useDelegationOrigin(ref: ScopedThreadRef | null): DelegationOrigin | null {
   return useAtomValue(ref === null ? NO_ORIGIN_ATOM : delegationOriginAtomFamily(threadKey(ref)));
+}
+
+const familyColorsAtom = (() => {
+  let previousKey = "";
+  let colors: ReadonlyMap<string, string> = new Map();
+  return Atom.make((get) => {
+    const keys = [
+      ...new Set(
+        get(environmentThreadShells.threadShellsAtom)
+          .filter((thread) => thread.delegationParentThreadId != null)
+          .map(delegationFamilyKey),
+      ),
+    ].toSorted();
+    const key = JSON.stringify(keys);
+    if (key !== previousKey) {
+      previousKey = key;
+      colors = createDelegationColorMap(keys);
+    }
+    return colors;
+  });
+})();
+
+export function useDelegationFamilyColor(key: string): string {
+  return useAtomValue(familyColorsAtom).get(key) ?? fallbackDelegationColor(key);
+}
+
+const delegationIsChildAtomFamily = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  return Atom.make((get) => {
+    const shell = get(environmentThreadShells.threadShellAtom(ref));
+    if (shell?.delegationParentThreadId != null) return true;
+    const detail = get(environmentThreadDetails.detailAtom(ref));
+    return detail !== null && deriveDelegationOrigin(detail.activities) !== null;
+  });
+});
+
+/** The child's role survives an unavailable/deleted parent; navigation is a separate concern. */
+export function useDelegationIsChild(ref: ScopedThreadRef): boolean {
+  return useAtomValue(delegationIsChildAtomFamily(threadKey(ref)));
 }

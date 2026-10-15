@@ -786,3 +786,20 @@ describe("agent delegation settings patches", () => {
     expect(unrelated.delegationPresets).toEqual(edited.delegationPresets);
   });
 });
+
+describe("per-conversation delegation suggestions", () => {
+  it("defaults off and merges independent conversation switches without overwriting other settings", () => {
+    expect(DEFAULT_SERVER_SETTINGS.delegationSuggestionOverrides).toEqual({});
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      delegationSuggestionOverrides: { parent: true },
+    });
+    const second = applyServerSettingsPatch(first, {
+      delegationSuggestionOverrides: { other: true },
+    });
+    const off = applyServerSettingsPatch(second, {
+      delegationSuggestionOverrides: { parent: false },
+    });
+    expect(off.delegationSuggestionOverrides).toEqual({ parent: false, other: true });
+    expect(off.enableAgentDelegation).toBe(DEFAULT_SERVER_SETTINGS.enableAgentDelegation);
+  });
+});

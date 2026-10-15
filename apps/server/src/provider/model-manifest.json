@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-29T01:03:44Z",
+  "updatedAt": "2026-10-16T00:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -43,10 +43,11 @@
     {
       "driver": "opencode",
       "t3CodeRange": ">=0.0.42",
-      "recommendedRange": ">=1.14.19 <2.0.0",
-      "recommendedVersion": "1.14.19",
+      "recommendedRange": ">=1.14.19 <2.0.0 || =2.0.25",
+      "recommendedVersion": "2.0.25",
       "ranges": [
-        { "range": ">=2.0.0", "status": "broken" },
+        { "range": "=2.0.25", "status": "supported" },
+        { "range": ">=2.0.0", "status": "unknown" },
         { "range": ">=1.14.19 <2.0.0", "status": "supported" },
         { "range": "<1.14.19", "status": "broken" }
       ]

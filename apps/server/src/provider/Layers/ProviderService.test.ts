@@ -5208,6 +5208,7 @@ describe("agent browser access", () => {
       /** Activities the thread already carries; omitted means delegation is not under test. */
       readonly delegationActivities?: ReadonlyArray<{ readonly kind: string }>;
       readonly enableAgentDelegation?: boolean;
+      readonly verifyDelegationPolicy?: boolean;
     },
   ) =>
     Effect.gen(function* () {
@@ -5226,6 +5227,7 @@ describe("agent browser access", () => {
         Layer.provide(runtimeRepositoryLayer),
       );
       const projectionLayer = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        listPendingTurnStarts: () => Effect.succeed([]),
         getTurnStartMessage: () => Effect.die("unused"),
         getImportedAgentSessionSources: () => Effect.die("unused"),
         getUserInputActivity: () => Effect.die("unused"),
@@ -5292,7 +5294,7 @@ describe("agent browser access", () => {
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
-        Layer.provide(
+        Layer.provideMerge(
           ServerSettings.ServerSettingsService.layerTest({
             enableAgentBrowserAccess,
             enableAgentDeviceAccess,
@@ -5328,16 +5330,44 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        return yield* provider.startSession(threadId, {
+        yield* provider.startSession(threadId, {
           provider: CODEX_DRIVER,
           providerInstanceId: codexInstanceId,
           threadId,
           runtimeMode: "full-access",
         });
+        if (options?.verifyDelegationPolicy) {
+          const settings = yield* ServerSettings.ServerSettingsService;
+          for (const enabled of [false, true, false]) {
+            yield* settings.updateSettings({
+              delegationSuggestionOverrides: { [threadId]: enabled },
+            });
+            yield* provider.sendTurn({
+              threadId,
+              input: "Check the current task",
+              attachments: [],
+            });
+            const input = codex.sendTurn.mock.calls.at(-1)?.[0].input ?? "";
+            assert.include(input, `Delegation suggestions are ${enabled ? "ON" : "OFF"}`);
+            assert.include(input, "Check the current task");
+            assert.include(input, "explicit user request");
+          }
+          assert.equal(codex.startSession.mock.calls.length, 1);
+        }
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
     });
+
+  it.effect(
+    "updates delegation suggestions on each turn without restarting the provider session",
+    () =>
+      startSessionWith(false, asThreadId("live-delegation-policy"), undefined, {
+        enableAgentDelegation: true,
+        delegationActivities: [],
+        verifyDelegationPolicy: true,
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   // The capability on the credential is the observable that matters: a session
   // always gets a credential (the pull request toolkit is never withheld), and

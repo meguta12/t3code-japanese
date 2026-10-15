@@ -1,3 +1,5 @@
+import { useDelegationIsChild } from "../../state/delegation";
+import { DelegationSuggestionControl } from "./DelegationSuggestionControl";
 import { ja, jaTemplate } from "../../lib/ja";
 import { deriveServedModel } from "../../lib/servedModel";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -1086,6 +1088,14 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   runningModelView: RunningModelStripView;
+  delegationThreadRef: ScopedThreadRef;
+  delegationOrigin: {
+    readonly parentThreadId: ThreadId;
+    readonly parentModel: string;
+    readonly parentTitle: string;
+  } | null;
+  delegationDisabled: boolean;
+  delegationIsChild: boolean;
   onOpenDelegatedThread: (threadId: ThreadId) => void;
   onOpenSubagents: () => void;
 }) {
@@ -1185,7 +1195,16 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         <TooltipPopup side="top">{ja(runtimeModeOption.description)}</TooltipPopup>
       </Tooltip>
 
+      <DelegationSuggestionControl
+        threadRef={props.delegationThreadRef}
+        isChild={props.delegationIsChild}
+        disabled={props.delegationDisabled}
+        size={size}
+      />
       <ComposerRunningModelStrip
+        origin={props.delegationOrigin}
+        isDelegatedChild={props.delegationIsChild}
+        currentThreadId={props.delegationThreadRef.threadId}
         view={props.runningModelView}
         size={size}
         hidden={props.hidden}
@@ -1605,7 +1624,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => deriveServedModel(activeThread?.activities ?? [], activeThread?.latestTurn?.turnId),
     [activeThread?.activities, activeThread?.latestTurn?.turnId],
   );
-  const { delegatedRuns, onOpenDelegatedThread } = useDelegatedRunsStrip(routeThreadRef);
+  const {
+    delegatedRuns,
+    onOpenDelegatedThread,
+    origin: delegationOrigin,
+  } = useDelegatedRunsStrip(routeThreadRef);
+  const delegationIsChild = useDelegationIsChild(routeThreadRef);
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
@@ -5054,6 +5078,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     size: composerControlsInStrip ? "xs" : "sm",
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
   });
+  const orchestrationControls = (
+    <ComposerFooterModeControls
+      showInteractionModeToggle={planModeUiEnabled}
+      interactionMode={interactionMode}
+      runtimeMode={runtimeMode}
+      size="xs"
+      hidden={false}
+      onToggleInteractionMode={toggleInteractionMode}
+      onRuntimeModeChange={handleRuntimeModeChange}
+      runningModelView={runningModelView}
+      delegationThreadRef={routeThreadRef}
+      delegationOrigin={delegationOrigin}
+      delegationDisabled={routeKind !== "server" || activeThread === null}
+      delegationIsChild={delegationIsChild}
+      onOpenDelegatedThread={onOpenDelegatedThread}
+      onOpenSubagents={onOpenSubagents}
+    />
+  );
   const restingBlockDefs = [
     ...(providerTraitsPicker
       ? [
@@ -5068,23 +5110,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           },
         ]
       : []),
-    {
-      id: "mode",
-      content: (
-        <ComposerFooterModeControls
-          showInteractionModeToggle={planModeUiEnabled}
-          interactionMode={interactionMode}
-          runtimeMode={runtimeMode}
-          size={composerControlsInStrip ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
-          onToggleInteractionMode={toggleInteractionMode}
-          onRuntimeModeChange={handleRuntimeModeChange}
-          runningModelView={runningModelView}
-          onOpenDelegatedThread={onOpenDelegatedThread}
-          onOpenSubagents={onOpenSubagents}
-        />
-      ),
-    },
   ];
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
@@ -5240,11 +5265,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
             runningModelMenuContent={
               hiddenRestingBlockIds.includes("mode") ? (
-                <ComposerRunningModelMenuContent
-                  view={runningModelView}
-                  onOpenDelegatedThread={onOpenDelegatedThread}
-                  onOpenSubagents={onOpenSubagents}
-                />
+                <>
+                  <DelegationSuggestionControl
+                    threadRef={routeThreadRef}
+                    isChild={delegationIsChild}
+                    disabled={routeKind !== "server"}
+                    size="xs"
+                  />
+                  <ComposerRunningModelMenuContent
+                    view={runningModelView}
+                    onOpenDelegatedThread={onOpenDelegatedThread}
+                    onOpenSubagents={onOpenSubagents}
+                  />
+                </>
               ) : undefined
             }
             onToggleInteractionMode={toggleInteractionMode}
@@ -7125,6 +7158,14 @@ It is referenced in your text; removing it also removes every reference.`,
               </div>
             )}
           </div>
+          {!showProviderUnavailable ? (
+            <div
+              className="flex w-full min-w-0 flex-wrap items-center gap-1 overflow-hidden px-3 py-1"
+              data-orchestration-toolbar
+            >
+              {orchestrationControls}
+            </div>
+          ) : null}
         </ComposerSurface.Main>
       </div>
     </form>

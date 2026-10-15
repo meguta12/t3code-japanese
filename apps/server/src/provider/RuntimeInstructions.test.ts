@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
+import {
+  buildDelegationPolicyInstructions,
+  buildRuntimeInstructions,
+} from "./RuntimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
   it("requires explicit registration of every PR and stack layer", () => {
@@ -42,5 +45,21 @@ describe("buildRuntimeInstructions", () => {
     const instructions = buildRuntimeInstructions({ harness: "Cursor", model });
     expect(instructions).toContain("through the Cursor harness.");
     expect(instructions).not.toContain("reasoning effort");
+  });
+});
+
+describe("conversation delegation policy", () => {
+  it("requires agreement only for useful proactive suggestions", () => {
+    const policy = buildDelegationPolicyInstructions(true);
+    expect(policy).toContain("materially help");
+    expect(policy).toContain("wait for the user's agreement before creating a child");
+    expect(policy).toContain("Do not ask on every turn");
+  });
+  it("keeps explicit user delegation available while suggestions are off", () => {
+    const policy = buildDelegationPolicyInstructions(false);
+    expect(policy).toContain("Do not proactively propose delegation");
+    expect(policy).toContain("explicit user request");
+    expect(policy).toContain("does not need repeated confirmation");
+    expect(policy).toContain("Never delegate from a delegated child");
   });
 });

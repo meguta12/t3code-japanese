@@ -1017,6 +1017,23 @@ describe("deriveDelegatedTaskStatus", () => {
 });
 
 describe("finalAssistantMessage", () => {
+  it("does not return a previous task's answer after a failed or still-queued follow-up", () => {
+    const old = message("old", "assistant", "OLD SUCCESS");
+    expect(
+      finalAssistantMessage({
+        latestTurn: { ...turn("error"), turnId: TurnId.make("new") },
+        messages: [old],
+      }),
+    ).toBeUndefined();
+    expect(
+      finalAssistantMessage({
+        latestTurn: turn("completed", "old"),
+        latestUserMessageAt: T_AFTER,
+        messages: [old],
+      }),
+    ).toBeUndefined();
+  });
+
   it("prefers the latest turn's assistant message and skips empty ones", () => {
     expect(
       finalAssistantMessage({
@@ -1033,7 +1050,7 @@ describe("finalAssistantMessage", () => {
         latestTurn: null,
         messages: [message("m-1", "user", "hi"), message("m-2", "assistant", "only answer")],
       }),
-    ).toBe("only answer");
+    ).toBeUndefined();
     expect(finalAssistantMessage({ latestTurn: null, messages: [] })).toBeUndefined();
   });
 });

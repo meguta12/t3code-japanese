@@ -2600,3 +2600,16 @@ describe("navigation after parking a thread", () => {
     },
   );
 });
+
+it("navigates from a collapsed child to the closest visible row in each direction", () => {
+  const input = {
+    threadIds: ["p", "other"],
+    allThreadIds: ["p", "c", "c2", "other"],
+    currentThreadId: "c",
+  };
+  expect(resolveAdjacentThreadId({ ...input, direction: "previous" })).toBe("p");
+  expect(resolveAdjacentThreadId({ ...input, direction: "next" })).toBe("other");
+  expect(
+    resolveAdjacentThreadId({ ...input, currentThreadId: "missing", direction: "next" }),
+  ).toBeNull();
+});

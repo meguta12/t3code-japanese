@@ -128,6 +128,8 @@ const ProjectionThreadPullRequestDbRowSchema = ProjectionThreadPullRequest.mapFi
 );
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
+    delegationParentThreadId: Schema.NullOr(ThreadId),
+    hasPendingTurnStart: Schema.Number,
     modelSelection: Schema.fromJsonString(ModelSelection),
     titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
@@ -570,6 +572,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title,
           title_state_json AS "titleState",
           model_selection_json AS "modelSelection",
+          EXISTS (SELECT 1 FROM projection_turns pending WHERE pending.thread_id = projection_threads.thread_id AND pending.turn_id IS NULL AND pending.state = 'pending') AS "hasPendingTurnStart",
+          (SELECT json_extract(origin.payload_json, '$.parentThreadId')
+           FROM projection_thread_activities origin
+           WHERE origin.thread_id = projection_threads.thread_id AND origin.kind = 'delegation.origin'
+           ORDER BY origin.sequence ASC LIMIT 1) AS "delegationParentThreadId",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           branch,
@@ -618,6 +625,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title,
           title_state_json AS "titleState",
           model_selection_json AS "modelSelection",
+          EXISTS (SELECT 1 FROM projection_turns pending WHERE pending.thread_id = threads.thread_id AND pending.turn_id IS NULL AND pending.state = 'pending') AS "hasPendingTurnStart",
+          (SELECT json_extract(origin.payload_json, '$.parentThreadId')
+           FROM projection_thread_activities origin
+           WHERE origin.thread_id = threads.thread_id AND origin.kind = 'delegation.origin'
+           ORDER BY origin.sequence ASC LIMIT 1) AS "delegationParentThreadId",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           branch,
@@ -693,6 +705,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title,
           title_state_json AS "titleState",
           model_selection_json AS "modelSelection",
+          EXISTS (SELECT 1 FROM projection_turns pending WHERE pending.thread_id = projection_threads.thread_id AND pending.turn_id IS NULL AND pending.state = 'pending') AS "hasPendingTurnStart",
+          (SELECT json_extract(origin.payload_json, '$.parentThreadId')
+           FROM projection_thread_activities origin
+           WHERE origin.thread_id = projection_threads.thread_id AND origin.kind = 'delegation.origin'
+           ORDER BY origin.sequence ASC LIMIT 1) AS "delegationParentThreadId",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           branch,
@@ -1297,6 +1314,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title,
           title_state_json AS "titleState",
           model_selection_json AS "modelSelection",
+          EXISTS (SELECT 1 FROM projection_turns pending WHERE pending.thread_id = projection_threads.thread_id AND pending.turn_id IS NULL AND pending.state = 'pending') AS "hasPendingTurnStart",
+          (SELECT json_extract(origin.payload_json, '$.parentThreadId')
+           FROM projection_thread_activities origin
+           WHERE origin.thread_id = projection_threads.thread_id AND origin.kind = 'delegation.origin'
+           ORDER BY origin.sequence ASC LIMIT 1) AS "delegationParentThreadId",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           branch,
@@ -1368,6 +1390,23 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ),
       ),
   });
+
+  const listPendingTurnStartRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ threadId: ThreadId, messageId: MessageId, requestedAt: IsoDateTime }),
+    execute:
+      () => sql`SELECT thread_id AS "threadId", pending_message_id AS "messageId", requested_at AS "requestedAt"
+      FROM projection_turns WHERE turn_id IS NULL AND state = 'pending' AND pending_message_id IS NOT NULL AND checkpoint_turn_count IS NULL`,
+  });
+  const listPendingTurnStarts: ProjectionSnapshotQueryShape["listPendingTurnStarts"] = () =>
+    listPendingTurnStartRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listPendingTurnStarts:query",
+          "ProjectionSnapshotQuery.listPendingTurnStarts:decodeRows",
+        ),
+      ),
+    );
 
   const getTurnStartMessageRow = SqlSchema.findOneOption({
     Request: TurnStartMessageLookupInput,
@@ -1467,42 +1506,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const listThreadActivityRowsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadActivityDbRowSchema,
-    execute: ({ threadId }) =>
-      sql`
-        SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          payload_json AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM (
-          SELECT
-            activity_id,
-            thread_id,
-            turn_id,
-            tone,
-            kind,
-            summary,
-            payload_json,
-            sequence,
-            created_at
-          FROM projection_thread_activities
-          WHERE thread_id = ${threadId}
-          ORDER BY
-            sequence DESC,
-            created_at DESC,
-            activity_id DESC
-          LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
-        ) AS recent_activities
-        ORDER BY
-          sequence ASC,
-          created_at ASC,
-          activity_id ASC
-      `,
+    execute: ({ threadId }) => sql`
+      SELECT activity_id AS "activityId", thread_id AS "threadId", turn_id AS "turnId",
+        tone, kind, summary, payload_json AS "payload", sequence, created_at AS "createdAt"
+      FROM projection_thread_activities
+      WHERE thread_id = ${threadId} AND (
+        kind IN ('delegation.started', 'delegation.origin') OR activity_id IN (
+          SELECT activity_id FROM projection_thread_activities WHERE thread_id = ${threadId}
+          ORDER BY sequence DESC, created_at DESC, activity_id DESC LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
+        )
+      ) ORDER BY sequence ASC, created_at ASC, activity_id ASC
+    `,
   });
 
   const getUserInputActivityRow = SqlSchema.findOneOption({
@@ -1942,6 +1956,10 @@ pending_approval_requests AS (
           FROM user_input_lifecycle
           WHERE request_order = 1
             AND kind = 'user-input.requested'
+          UNION ALL
+          SELECT activity_id FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND kind IN ('delegation.started', 'delegation.origin')
         )
   `;
 
@@ -2385,6 +2403,10 @@ pending_approval_requests AS (
                 projectId: row.projectId,
                 title: row.title,
                 modelSelection: row.modelSelection,
+                hasPendingTurnStart: row.hasPendingTurnStart === 1,
+                ...(row.delegationParentThreadId !== null
+                  ? { delegationParentThreadId: row.delegationParentThreadId }
+                  : {}),
                 runtimeMode: row.runtimeMode,
                 interactionMode: row.interactionMode,
                 branch: row.branch,
@@ -2631,6 +2653,10 @@ pending_approval_requests AS (
                   projectId: row.projectId,
                   title: row.title,
                   modelSelection: row.modelSelection,
+                  hasPendingTurnStart: row.hasPendingTurnStart === 1,
+                  ...(row.delegationParentThreadId !== null
+                    ? { delegationParentThreadId: row.delegationParentThreadId }
+                    : {}),
                   runtimeMode: row.runtimeMode,
                   interactionMode: row.interactionMode,
                   branch: row.branch,
@@ -2792,6 +2818,10 @@ pending_approval_requests AS (
                         projectId: row.projectId,
                         title: row.title,
                         modelSelection: row.modelSelection,
+                        hasPendingTurnStart: row.hasPendingTurnStart === 1,
+                        ...(row.delegationParentThreadId !== null
+                          ? { delegationParentThreadId: row.delegationParentThreadId }
+                          : {}),
                         runtimeMode: row.runtimeMode,
                         interactionMode: row.interactionMode,
                         branch: row.branch,
@@ -2978,6 +3008,10 @@ pending_approval_requests AS (
                   projectId: row.projectId,
                   title: row.title,
                   modelSelection: row.modelSelection,
+                  hasPendingTurnStart: row.hasPendingTurnStart === 1,
+                  ...(row.delegationParentThreadId !== null
+                    ? { delegationParentThreadId: row.delegationParentThreadId }
+                    : {}),
                   runtimeMode: row.runtimeMode,
                   interactionMode: row.interactionMode,
                   branch: row.branch,
@@ -3324,6 +3358,10 @@ pending_approval_requests AS (
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
+        hasPendingTurnStart: threadRow.value.hasPendingTurnStart === 1,
+        ...(threadRow.value.delegationParentThreadId !== null
+          ? { delegationParentThreadId: threadRow.value.delegationParentThreadId }
+          : {}),
         runtimeMode: threadRow.value.runtimeMode,
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
@@ -3626,6 +3664,10 @@ pending_approval_requests AS (
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
+        hasPendingTurnStart: threadRow.value.hasPendingTurnStart === 1,
+        ...(threadRow.value.delegationParentThreadId !== null
+          ? { delegationParentThreadId: threadRow.value.delegationParentThreadId }
+          : {}),
         runtimeMode: threadRow.value.runtimeMode,
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
@@ -3876,6 +3918,7 @@ pending_approval_requests AS (
     getThreadShellById,
     getThreadRuntimeContext,
     getTurnStartMessage,
+    listPendingTurnStarts,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

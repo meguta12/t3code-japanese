@@ -48,6 +48,8 @@ export function mergeEnvironmentThread(
     projectId: shell.projectId,
     title: shell.title,
     modelSelection: shell.modelSelection,
+    delegationParentThreadId: shell.delegationParentThreadId,
+    hasPendingTurnStart: shell.hasPendingTurnStart,
     runtimeMode: shell.runtimeMode,
     interactionMode: shell.interactionMode,
     branch: shell.branch,

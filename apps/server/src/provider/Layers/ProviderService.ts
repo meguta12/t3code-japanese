@@ -9,6 +9,7 @@
  *
  * @module ProviderServiceLive
  */
+import { buildDelegationPolicyInstructions } from "../RuntimeInstructions.ts";
 import {
   EventId,
   MessageId,
@@ -1675,6 +1676,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       }
       return false;
     };
+    if (parsed.continuation !== true && (yield* delegationAllowed(parsed.threadId))) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError((cause) =>
+          toValidationError("ProviderService.sendTurn", "Could not read delegation policy", cause),
+        ),
+      );
+      appendAttachmentContext(
+        buildDelegationPolicyInstructions(
+          settings.delegationSuggestionOverrides[parsed.threadId] === true,
+        ),
+        { force: true },
+      );
+    }
     // Numbered attachments ("素材N") get one table that says which file each
     // number is, covering images, files and files attached by reference. It
     // replaces the per-file path lines, so a client that does not number

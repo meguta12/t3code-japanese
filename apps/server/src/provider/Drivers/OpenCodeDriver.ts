@@ -27,9 +27,12 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
+import { makeOpenCode2Adapter } from "../Layers/OpenCode2Adapter.ts";
+import { makeOpenCode2Runtime } from "../OpenCode2Runtime.ts";
 import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
+  checkOpenCode2ProviderStatus,
   makePendingOpenCodeProvider,
   openCodeSkillsToServerProviderSkills,
   openCodeCommandsToServerProviderSlashCommands,
@@ -69,14 +72,15 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   );
 }
 
-const UPDATE = makePackageManagedProviderMaintenanceResolver({
-  provider: DRIVER_KIND,
-  npmPackageName: "opencode-ai",
-  nativeUpdate: {
-    args: ["upgrade"],
-    isCommandPath: isOpenCodeNativeCommandPath,
-  },
-});
+const updateForVersion = (v2: boolean) =>
+  makePackageManagedProviderMaintenanceResolver({
+    provider: DRIVER_KIND,
+    npmPackageName: v2 ? "@opencode/cli" : "opencode-ai",
+    nativeUpdate: {
+      args: ["upgrade"],
+      isCommandPath: isOpenCodeNativeCommandPath,
+    },
+  });
 
 export type OpenCodeDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
@@ -121,8 +125,14 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+      const openCode2 = yield* makeOpenCode2Runtime({
+        settings: effectiveConfig,
+        directory: serverConfig.cwd,
+        environment: processEnv,
+      });
+      const useOpenCode2 = yield* openCode2.detect;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+        resolveProviderMaintenanceCapabilitiesEffect(updateForVersion(useOpenCode2), {
           binaryPath: effectiveConfig.binaryPath,
           env: processEnv,
         }).pipe(
@@ -132,11 +142,13 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         ),
       );
 
-      const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
+      const adapter = useOpenCode2
+        ? yield* makeOpenCode2Adapter(effectiveConfig, openCode2)
+        : yield* makeOpenCodeAdapter(effectiveConfig, {
+            instanceId,
+            environment: processEnv,
+            ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+          });
       const serverOwner = yield* OpenCodeServerOwner.make({
         binaryPath: effectiveConfig.binaryPath,
         directory: serverConfig.cwd,
@@ -145,13 +157,16 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           : {}),
         environment: processEnv,
       });
-      const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      );
+      const textGeneration = yield* makeOpenCodeTextGeneration(
+        effectiveConfig,
+        useOpenCode2 ? openCode2 : undefined,
+      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
 
       const checkProvider = Effect.all(
         {
-          provider: checkOpenCodeProviderStatus(effectiveConfig, serverConfig.cwd, processEnv),
+          provider: useOpenCode2
+            ? checkOpenCode2ProviderStatus(effectiveConfig, serverConfig.cwd, openCode2)
+            : checkOpenCodeProviderStatus(effectiveConfig, serverConfig.cwd, processEnv),
           usageLimits: readOpenCodeGoUsageLimits({
             enabled: effectiveConfig.enabled,
             serverUrl: effectiveConfig.serverUrl,
@@ -188,39 +203,54 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           { concurrency: "unbounded" },
         );
       const loadWorkspaceForCwd = (cwd: string) =>
-        effectiveConfig.serverUrl.trim().length > 0
-          ? Effect.scoped(
-              Effect.gen(function* () {
-                const server = yield* openCodeRuntime.connectToOpenCodeServer({
-                  binaryPath: effectiveConfig.binaryPath,
-                  directory: cwd,
-                  serverUrl: effectiveConfig.serverUrl,
-                  ...(effectiveConfig.serverPassword
-                    ? { serverPassword: effectiveConfig.serverPassword }
-                    : {}),
-                  environment: processEnv,
-                });
-                const client = openCodeRuntime.createOpenCodeSdkClient({
-                  baseUrl: server.url,
-                  directory: cwd,
-                  ...(effectiveConfig.serverPassword
-                    ? { serverPassword: effectiveConfig.serverPassword }
-                    : {}),
-                });
-                return yield* loadWorkspaceInventory(client);
-              }),
+        useOpenCode2
+          ? openCode2.workspace(cwd).pipe(
+              Effect.map((workspace) => ({
+                skills: workspace.skills.data.map((skill) => ({
+                  name: skill.id,
+                  ...(skill.description ? { description: skill.description } : {}),
+                  location: skill.path,
+                })),
+                commands: workspace.commands.data.map((command) => ({
+                  name: command.name,
+                  hints: [],
+                  ...(command.description ? { description: command.description } : {}),
+                })),
+              })),
             )
-          : serverOwner.withServer((server) =>
-              loadWorkspaceInventory(
-                openCodeRuntime.createOpenCodeSdkClient({
-                  baseUrl: server.url,
-                  directory: cwd,
-                  ...(server.serverPassword !== undefined
-                    ? { serverPassword: server.serverPassword }
-                    : {}),
+          : effectiveConfig.serverUrl.trim().length > 0
+            ? Effect.scoped(
+                Effect.gen(function* () {
+                  const server = yield* openCodeRuntime.connectToOpenCodeServer({
+                    binaryPath: effectiveConfig.binaryPath,
+                    directory: cwd,
+                    serverUrl: effectiveConfig.serverUrl,
+                    ...(effectiveConfig.serverPassword
+                      ? { serverPassword: effectiveConfig.serverPassword }
+                      : {}),
+                    environment: processEnv,
+                  });
+                  const client = openCodeRuntime.createOpenCodeSdkClient({
+                    baseUrl: server.url,
+                    directory: cwd,
+                    ...(effectiveConfig.serverPassword
+                      ? { serverPassword: effectiveConfig.serverPassword }
+                      : {}),
+                  });
+                  return yield* loadWorkspaceInventory(client);
                 }),
-              ),
-            );
+              )
+            : serverOwner.withServer((server) =>
+                loadWorkspaceInventory(
+                  openCodeRuntime.createOpenCodeSdkClient({
+                    baseUrl: server.url,
+                    directory: cwd,
+                    ...(server.serverPassword !== undefined
+                      ? { serverPassword: server.serverPassword }
+                      : {}),
+                  }),
+                ),
+              );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(

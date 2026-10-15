@@ -305,6 +305,21 @@ function resolvePreset(
       `Preset "${preset.name}" uses ${provider.displayName}, which is not ready: ${provider.notReadyReason ?? "not available"}.`,
     );
   }
+  for (const saved of selection.options ?? []) {
+    const descriptor = model.optionDescriptors.find((entry) => entry.id === saved.id);
+    const supported =
+      descriptor?.type === "boolean"
+        ? typeof saved.value === "boolean"
+        : descriptor?.type === "select" &&
+          descriptor.options.some((option) => option.id === saved.value);
+    if (!supported) {
+      return fail(
+        "preset_unavailable",
+        `Preset "${preset.name}" contains an unsupported option ${saved.id}=${String(saved.value)}. Update the preset in Settings.`,
+        descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [],
+      );
+    }
+  }
   return {
     ok: true,
     target: {

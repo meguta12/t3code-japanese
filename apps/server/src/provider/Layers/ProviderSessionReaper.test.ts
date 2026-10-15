@@ -254,6 +254,7 @@ describe("ProviderSessionReaper", () => {
           getThreadCheckpointContext: () => Effect.die("unused"),
           getFullThreadDiffContext: () => Effect.die("unused"),
           getThreadRuntimeContext: () => Effect.die("unused"),
+          listPendingTurnStarts: () => Effect.succeed([]),
           getTurnStartMessage: () => Effect.die("unused"),
           getThreadShellById: (threadId) =>
             Effect.succeed(

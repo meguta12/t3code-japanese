@@ -95,7 +95,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       to="/"
     >
       {/* Center the visible capitals, without the font's ascender/descender space. */}
-      <span className="truncate text-base font-semibold tracking-tight">T3 Code</span>
+      <span className="truncate text-base font-semibold tracking-tight">T3 Code 日本語 ver.</span>
       <span className={cn("ml-2 text-2xs", onBackdrop ? "text-white/80" : "text-muted-foreground")}>
         {APP_VERSION}
       </span>
