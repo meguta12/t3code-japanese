@@ -1,0 +1,27 @@
+import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
+import { useCallback } from "react";
+
+import { useDelegatedRuns } from "../../state/delegation";
+import { buildThreadRouteParams } from "../../threadRoutes";
+
+/**
+ * What the composer strip needs to show the threads this thread delegated to:
+ * the runs (each child's status follows its own thread shell) and a way to
+ * open one.
+ */
+export function useDelegatedRunsStrip(threadRef: ScopedThreadRef) {
+  const navigate = useNavigate();
+  const delegatedRuns = useDelegatedRuns(threadRef);
+  const { environmentId } = threadRef;
+  const onOpenDelegatedThread = useCallback(
+    (threadId: ThreadId) => {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams({ environmentId, threadId }),
+      });
+    },
+    [environmentId, navigate],
+  );
+  return { delegatedRuns, onOpenDelegatedThread };
+}
